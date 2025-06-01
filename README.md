@@ -169,5 +169,3 @@ Key improvements in this version:
 -   **Clearer Parameter Descriptions**: In the "Available Tools" section.
 -   **License Section**: Added, reflecting the ISC license from your `package.json`.
 -   **Consistent Formatting**: General improvements to markdown structure.
-
-This should give your `README.md` a more structured and professional appearance.

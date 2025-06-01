@@ -62,4 +62,28 @@ export const QueryCardsArgumentsSchema = z.object({
     .describe("Text contained in any field of the note."),
   noteModel: z.string().optional()
     .describe("Filter by a specific note model (e.g., 'Basic', 'Cloze').")
-}); // Removed the .refine() block
+});
+
+// New validation schemas for additional tools
+export const DeleteDeckArgumentsSchema = z.object({
+  deckName: z.string().min(1, "Deck name cannot be empty."),
+});
+
+export const GetDeckStatsArgumentsSchema = z.object({
+  deckName: z.string().min(1, "Deck name cannot be empty."),
+});
+
+export const SuspendCardsArgumentsSchema = z.object({
+  cardIds: z.array(z.number().positive("Card ID must be a positive number."))
+             .min(1, "At least one Card ID must be provided."),
+});
+
+export const UnsuspendCardsArgumentsSchema = z.object({
+  cardIds: z.array(z.number().positive("Card ID must be a positive number."))
+             .min(1, "At least one Card ID must be provided."),
+});
+
+export const GetCardInfoArgumentsSchema = z.object({
+  cardIds: z.array(z.number().positive("Card ID must be a positive number."))
+             .min(1, "At least one Card ID must be provided."),
+});

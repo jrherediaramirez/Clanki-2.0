@@ -10,6 +10,11 @@ import {
   UpdateClozeCardArgumentsSchema,
   DeleteNoteArgumentsSchema,
   QueryCardsArgumentsSchema,
+    DeleteDeckArgumentsSchema,
+  GetDeckStatsArgumentsSchema,
+  SuspendCardsArgumentsSchema,
+  UnsuspendCardsArgumentsSchema,
+  GetCardInfoArgumentsSchema,
 } from "../../services/validation.js";
 import { NOTE_TYPES } from "../../utils/constants.js";
 import { AnkiNoteInfo } from "../../types/anki.js";
@@ -160,6 +165,81 @@ export const queryCardsTool: Tool = {
     required: [] // Explicitly no top-level properties are required; logic is in the handler
   },
 };
+export const deleteDeckTool: Tool = {
+  name: "delete-deck",
+  description: "Delete an entire Anki deck and all its cards",
+  inputSchema: {
+    type: "object",
+    properties: {
+      deckName: { type: "string", description: "Name of the deck to delete" },
+    },
+    required: ["deckName"],
+  },
+};
+
+export const getDeckStatsTool: Tool = {
+  name: "get-deck-stats",
+  description: "Get statistics about a deck (total cards, new, due, suspended, etc.)",
+  inputSchema: {
+    type: "object",
+    properties: {
+      deckName: { type: "string", description: "Name of the deck to get statistics for" },
+    },
+    required: ["deckName"],
+  },
+};
+
+export const suspendCardsTool: Tool = {
+  name: "suspend-cards",
+  description: "Suspend cards by their IDs (temporarily disable them from reviews)",
+  inputSchema: {
+    type: "object",
+    properties: {
+      cardIds: {
+        type: "array",
+        items: { type: "number", description: "A Card ID" },
+        description: "An array of Card IDs to suspend.",
+        minItems: 1,
+      }
+    },
+    required: ["cardIds"]
+  }
+};
+
+export const unsuspendCardsTool: Tool = {
+  name: "unsuspend-cards",
+  description: "Unsuspend cards by their IDs (re-enable them for reviews)",
+  inputSchema: {
+    type: "object",
+    properties: {
+      cardIds: {
+        type: "array",
+        items: { type: "number", description: "A Card ID" },
+        description: "An array of Card IDs to unsuspend.",
+        minItems: 1,
+      }
+    },
+    required: ["cardIds"]
+  }
+};
+
+export const getCardInfoTool: Tool = {
+  name: "get-card-info",
+  description: "Get detailed information about specific cards (intervals, due dates, learning state)",
+  inputSchema: {
+    type: "object",
+    properties: {
+      cardIds: {
+        type: "array",
+        items: { type: "number", description: "A Card ID" },
+        description: "An array of Card IDs to get information for.",
+        minItems: 1,
+      }
+    },
+    required: ["cardIds"]
+  }
+};
+
 
 export const allTools: Tool[] = [
   createDeckTool,
@@ -170,6 +250,11 @@ export const allTools: Tool[] = [
   createCardsBatchTool,
   deleteNoteTool,
   queryCardsTool,
+    deleteDeckTool,
+  getDeckStatsTool,
+  suspendCardsTool,
+  unsuspendCardsTool,
+  getCardInfoTool,
 ];
 
 export function getToolDefinitions(): { tools: Tool[] } { // Added explicit return type
@@ -410,6 +495,11 @@ export async function handleToolCall(name: string, args: unknown, ankiService: A
       case "create-cards-batch": return await handleCreateCardsBatch(args, ankiService);
       case "delete-note": return await handleDeleteNote(args, ankiService);
       case "query-cards": return await handleQueryCards(args, ankiService);
+      case "delete-deck": return await handleDeleteDeck(args, ankiService);
+      case "get-deck-stats": return await handleGetDeckStats(args, ankiService);
+      case "suspend-cards": return await handleSuspendCards(args, ankiService);
+      case "unsuspend-cards": return await handleUnsuspendCards(args, ankiService);
+      case "get-card-info": return await handleGetCardInfo(args, ankiService);
       default:
         console.error(`Unknown tool called: ${name}`);
         throw new AnkiError(`Unknown tool: ${name}`);
@@ -426,4 +516,82 @@ export async function handleToolCall(name: string, args: unknown, ankiService: A
         content: [{ type: "text", text: { text: `Tool execution error: ${errorMessage}` } }]
     };
   }
+}
+
+export async function handleDeleteDeck(args: unknown, ankiService: AnkiService): Promise<ToolResponse> {
+  const { deckName } = DeleteDeckArgumentsSchema.parse(args);
+  await ankiService.deleteDeck(deckName);
+  return {
+    content: [{ type: "text", text: { text: `Successfully deleted deck: ${deckName}` } }],
+  };
+}
+
+export async function handleGetDeckStats(args: unknown, ankiService: AnkiService): Promise<ToolResponse> {
+  const { deckName } = GetDeckStatsArgumentsSchema.parse(args);
+  const stats = await ankiService.getDeckStats(deckName);
+  
+  const statsText = `Deck Statistics for "${stats.deckName}":
+- Total Cards: ${stats.totalCards}
+- New Cards: ${stats.newCards}
+- Learning Cards: ${stats.learningCards}
+- Due Cards: ${stats.dueCards}
+- Suspended Cards: ${stats.suspendedCards}
+- Buried Cards: ${stats.buriedCards}${stats.averageInterval ? `\n- Average Interval: ${stats.averageInterval} days` : ''}`;
+
+  return {
+    content: [{ type: "text", text: { text: statsText } }],
+  };
+}
+
+export async function handleSuspendCards(args: unknown, ankiService: AnkiService): Promise<ToolResponse> {
+  const { cardIds } = SuspendCardsArgumentsSchema.parse(args);
+  await ankiService.suspendCards(cardIds);
+  return {
+    content: [{ type: "text", text: { text: `Successfully suspended ${cardIds.length} card(s): ${cardIds.join(", ")}` } }],
+  };
+}
+
+export async function handleUnsuspendCards(args: unknown, ankiService: AnkiService): Promise<ToolResponse> {
+  const { cardIds } = UnsuspendCardsArgumentsSchema.parse(args);
+  await ankiService.unsuspendCards(cardIds);
+  return {
+    content: [{ type: "text", text: { text: `Successfully unsuspended ${cardIds.length} card(s): ${cardIds.join(", ")}` } }],
+  };
+}
+
+export async function handleGetCardInfo(args: unknown, ankiService: AnkiService): Promise<ToolResponse> {
+  const { cardIds } = GetCardInfoArgumentsSchema.parse(args);
+  const cardsInfo = await ankiService.getCardsInfo(cardIds);
+  
+  const cardDetails = cardsInfo.map(card => {
+    // Function to get queue status with proper typing
+    const getQueueStatus = (queue: number): string => {
+      switch (queue) {
+        case 0: return "New";
+        case 1: return "Learning";
+        case 2: return "Due";
+        case 3: return "In Learning (day)";
+        case -1: return "Suspended";
+        case -2: return "User Buried";
+        case -3: return "Scheduler Buried";
+        default: return "Unknown";
+      }
+    };
+    
+    const queueStatus = getQueueStatus(card.queue);
+    
+    return `Card ID: ${card.cardId}
+Note ID: ${card.noteId}
+Deck: ${card.deckName}
+Status: ${queueStatus}
+Interval: ${card.interval} days
+Due: ${card.due}
+Reviews: ${card.reviews}
+Lapses: ${card.lapses}
+Factor: ${card.factor}%`;
+  }).join("\n\n---\n");
+
+  return {
+    content: [{ type: "text", text: { text: `Card Information:\n\n${cardDetails}` } }],
+  };
 }

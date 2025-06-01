@@ -20,5 +20,11 @@ export const ANKI_ACTIONS = {
   DECK_NAMES: "deckNames",
   FIND_NOTES: "findNotes",
   NOTES_INFO: "notesInfo",
-  DELETE_NOTES: "deleteNotes", // Add this line
+  DELETE_NOTES: "deleteNotes",
+  // New actions for additional functionality
+  DELETE_DECKS: "deleteDecks",
+  FIND_CARDS: "findCards",
+  CARDS_INFO: "cardsInfo",
+  SUSPEND: "suspend",
+  UNSUSPEND: "unsuspend",
 } as const;

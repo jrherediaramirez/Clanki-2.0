@@ -58,3 +58,41 @@ export interface UpdateClozeCardArgs {
   backExtra?: string;
   tags?: string[];
 }
+
+// New interfaces for additional functionality
+export interface AnkiCardInfo {
+  cardId: number;
+  noteId: number;
+  deckName: string;
+  question: string;
+  answer: string;
+  modelName: string;
+  fieldOrder: number;
+  fields: Record<string, { value: string; order: number }>;
+  tags: string[];
+  note: number;
+  type: number;
+  queue: number;
+  due: number;
+  interval: number;
+  factor: number;
+  reviews: number;
+  lapses: number;
+  left: number;
+  odue: number;
+  odid: number;
+  flags: number;
+  data: string;
+}
+
+export interface DeckStats {
+  deckName: string;
+  totalCards: number;
+  newCards: number;
+  learningCards: number;
+  dueCards: number;
+  suspendedCards: number;
+  buriedCards: number;
+  averageInterval?: number;
+  cardsAddedToday?: number;
+}

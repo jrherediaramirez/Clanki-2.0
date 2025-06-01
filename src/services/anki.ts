@@ -8,7 +8,7 @@ import {
   CHUNK_SIZE,
   ANKI_ACTIONS
 } from "../utils/constants.js";
-import { AnkiResponse, AnkiNote, AnkiNoteInfo } from "../types/anki.js";
+import { AnkiResponse, AnkiNote, AnkiNoteInfo, AnkiCardInfo, DeckStats } from "../types/anki.js";
 import { AnkiError } from "../utils/errors.js";
 
 export class AnkiService {
@@ -76,7 +76,10 @@ export class AnkiService {
                   if (
                     action === ANKI_ACTIONS.UPDATE_NOTE_FIELDS ||
                     action === ANKI_ACTIONS.REPLACE_TAGS ||
-                    action === ANKI_ACTIONS.DELETE_NOTES
+                    action === ANKI_ACTIONS.DELETE_NOTES ||
+                    action === ANKI_ACTIONS.DELETE_DECKS ||
+                    action === ANKI_ACTIONS.SUSPEND ||
+                    action === ANKI_ACTIONS.UNSUSPEND
                   ) {
                     resolve({ success: true } as T);
                     return;
@@ -123,6 +126,7 @@ export class AnkiService {
     throw new AnkiError(`Failed after ${retries} attempts`);
   }
 
+  // Existing methods
   async createDeck(deckName: string): Promise<void> {
     await this.request(ANKI_ACTIONS.CREATE_DECK, { deck: deckName });
   }
@@ -150,7 +154,6 @@ export class AnkiService {
       return;
     }
     await this.request<null>(ANKI_ACTIONS.DELETE_NOTES, { notes: noteIds });
-    // deleteNotes returns null on success; request() handles it
   }
 
   async getDeckNames(): Promise<string[]> {
@@ -173,5 +176,115 @@ export class AnkiService {
     }
 
     return allNotes;
+  }
+
+  // New methods for additional functionality
+  async deleteDeck(deckName: string): Promise<void> {
+    await this.request(ANKI_ACTIONS.DELETE_DECKS, { 
+      decks: [deckName], 
+      cardsToo: true // Delete cards along with deck
+    });
+  }
+
+  async findCards(query: string): Promise<number[]> {
+    return await this.request<number[]>(ANKI_ACTIONS.FIND_CARDS, { query });
+  }
+
+  async getCardsInfo(cardIds: number[]): Promise<AnkiCardInfo[]> {
+    const allCards: AnkiCardInfo[] = [];
+
+    for (let i = 0; i < cardIds.length; i += CHUNK_SIZE) {
+      const chunk = cardIds.slice(i, i + CHUNK_SIZE);
+      const chunkCards = await this.request<AnkiCardInfo[]>(ANKI_ACTIONS.CARDS_INFO, {
+        cards: chunk,
+      });
+      allCards.push(...chunkCards);
+    }
+
+    return allCards;
+  }
+
+  async suspendCards(cardIds: number[]): Promise<void> {
+    if (cardIds.length === 0) {
+      console.warn("suspendCards called with empty array of card IDs.");
+      return;
+    }
+    await this.request(ANKI_ACTIONS.SUSPEND, { cards: cardIds });
+  }
+
+  async unsuspendCards(cardIds: number[]): Promise<void> {
+    if (cardIds.length === 0) {
+      console.warn("unsuspendCards called with empty array of card IDs.");
+      return;
+    }
+    await this.request(ANKI_ACTIONS.UNSUSPEND, { cards: cardIds });
+  }
+
+  async getDeckStats(deckName: string): Promise<DeckStats> {
+    // Get all cards in the deck
+    const allCardIds = await this.findCards(`deck:"${deckName}"`);
+    
+    if (allCardIds.length === 0) {
+      return {
+        deckName,
+        totalCards: 0,
+        newCards: 0,
+        learningCards: 0,
+        dueCards: 0,
+        suspendedCards: 0,
+        buriedCards: 0,
+      };
+    }
+
+    // Get detailed info about all cards
+    const cardsInfo = await this.getCardsInfo(allCardIds);
+    
+    // Calculate statistics
+    const stats: DeckStats = {
+      deckName,
+      totalCards: cardsInfo.length,
+      newCards: 0,
+      learningCards: 0,
+      dueCards: 0,
+      suspendedCards: 0,
+      buriedCards: 0,
+    };
+
+    let totalInterval = 0;
+    let cardCountWithInterval = 0;
+
+    for (const card of cardsInfo) {
+      // Card queue meanings:
+      // 0 = new, 1 = learning, 2 = due, -1 = suspended, -2 = user buried, -3 = sched buried
+      switch (card.queue) {
+        case 0:
+          stats.newCards++;
+          break;
+        case 1:
+          stats.learningCards++;
+          break;
+        case 2:
+          stats.dueCards++;
+          if (card.interval > 0) {
+            totalInterval += card.interval;
+            cardCountWithInterval++;
+          }
+          break;
+        case -1:
+          stats.suspendedCards++;
+          break;
+        case -2:
+        case -3:
+          stats.buriedCards++;
+          break;
+      }
+    }
+
+    // Calculate average interval
+    if (cardCountWithInterval > 0) {
+      stats.averageInterval = Math.round(totalInterval / cardCountWithInterval);
+    }
+
+    return stats;
   }
 }

@@ -10,9 +10,40 @@ import {
 import { AnkiService } from "../services/anki.js";
 import { getToolDefinitions, handleToolCall, listResources, readResource } from "./handlers/index.js";
 
+// Import the guidelines text from tools.ts
+const CLANKI_OPERATIONAL_GUIDELINES_TEXT = `
+// --- Clanki 2.0 Operational Guidelines ---
+
+**Workflow for Card Creation:**
+
+1. **Check User's Setup:**
+   * Call \`get-model-names\` to see available note types
+   * For specialized content, call \`get-model-info\` on relevant custom types
+   * Inform user of applicable custom note types found
+
+2. **Tool Selection:**
+   * **Batch Creation:** Use \`create-cards-batch\` for multiple cards from documents/lists
+   * **Single Cards:** Use \`create-dynamic-card\` (user specifies type) or \`smart-create-card\` (AI infers)
+   * **Basic/Cloze:** Use \`create-card\` or \`create-cloze-card\` when explicitly requested
+
+3. **Best Practices:**
+   * Break complex content into logical, focused cards
+   * Map content accurately to custom note type fields
+   * Use relevant tags for organization
+   * Confirm deck name if not specified
+   * For batch operations, summarize plan before executing
+
+**Key Rules:**
+- Always check available note types first
+- Prefer specialized note types over Basic when applicable
+- Use batch creation for efficiency with multiple cards
+- Present errors clearly with suggested solutions
+`;
+
 export class AnkiServer {
   private server: Server;
   private ankiService: AnkiService;
+  private guidelinesShown: boolean = false; // Flag to track if guidelines have been shown
 
   constructor() {
     this.ankiService = new AnkiService();
@@ -38,11 +69,33 @@ export class AnkiServer {
       return getToolDefinitions();
     });
 
-// Handle tool calls
+    // Handle tool calls with auto-guidelines injection
     this.server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
       const { name, arguments: args } = request.params;
+      
+      // Auto-inject guidelines on first tool call (except when explicitly requesting guidelines)
+      if (!this.guidelinesShown && name !== "get_clanki_operational_guidelines") {
+        this.guidelinesShown = true;
+        
+        const result = await handleToolCall(name, args, this.ankiService);
+        
+        // Prepend guidelines to the first response
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "🔧 **Clanki 2.0 Operational Guidelines Auto-Loaded**\n\n" + CLANKI_OPERATIONAL_GUIDELINES_TEXT + "\n\n" + "─".repeat(80) + "\n\n**Your Request Result:**\n\n"
+            },
+            ...result.content.map(item => ({
+              type: item.type,
+              text: item.text.text // Extract the text from the nested structure
+            }))
+          ]
+        };
+      }
+      
+      // Normal tool call handling for subsequent calls
       const result = await handleToolCall(name, args, this.ankiService);
-      // Convert from the internal ToolResponse format to MCP SDK format
       return {
         content: result.content.map(item => ({
           type: item.type,

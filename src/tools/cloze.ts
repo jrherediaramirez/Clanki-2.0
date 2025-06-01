@@ -1,6 +1,6 @@
 import { AnkiService } from "../services/anki.js";
 import { CreateClozeCardArgumentsSchema, UpdateClozeCardArgumentsSchema } from "../services/validation.js";
-import { ToolResponse } from "../types/mcp.js";
+import { ToolResponse } from "../types/mcp.js"; // This now refers to the updated ToolResponse
 import { NOTE_TYPES } from "../utils/constants.js";
 import { AnkiError } from "../utils/errors.js";
 
@@ -92,7 +92,7 @@ export async function handleCreateClozeCard(
     content: [
       {
         type: "text",
-        text: `Successfully created new cloze card in deck "${deckName}"`,
+        text: { text: `Successfully created new cloze card in deck "${deckName}"` }, // Updated
       },
     ],
   };
@@ -121,7 +121,7 @@ export async function handleUpdateClozeCard(
     fieldsToUpdate.Text = text;
   }
   
-  if (backExtra !== undefined) {
+  if (backExtra !== undefined) { // Check for undefined to allow clearing the field
     fieldsToUpdate["Back Extra"] = backExtra;
   }
 
@@ -129,7 +129,7 @@ export async function handleUpdateClozeCard(
     await ankiService.updateNoteFields(noteId, fieldsToUpdate);
   }
 
-  if (tags) {
+  if (tags) { // Check if tags array is provided
     await ankiService.replaceTags([noteId], tags);
   }
 
@@ -137,7 +137,7 @@ export async function handleUpdateClozeCard(
     content: [
       {
         type: "text",
-        text: `Successfully updated cloze note ${noteId}`,
+        text: { text: `Successfully updated cloze note ${noteId}` }, // Updated
       },
     ],
   };

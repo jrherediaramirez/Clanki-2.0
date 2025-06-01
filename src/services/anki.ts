@@ -5,7 +5,8 @@ import {
   ANKI_CONNECT_VERSION,
   DEFAULT_RETRIES,
   DEFAULT_DELAY,
-  CHUNK_SIZE
+  CHUNK_SIZE,
+  ANKI_ACTIONS
 } from "../utils/constants.js";
 import { AnkiResponse, AnkiNote, AnkiNoteInfo } from "../types/anki.js";
 import { AnkiError } from "../utils/errors.js";
@@ -70,12 +71,22 @@ export class AnkiService {
                   return;
                 }
 
-                if (parsedData.result === null || parsedData.result === undefined) {
-                  if (action === "updateNoteFields" || action === "replaceTags") {
-                    resolve({} as T);
+                // Handle null results for specific actions
+                if (parsedData.result === null) {
+                  if (
+                    action === ANKI_ACTIONS.UPDATE_NOTE_FIELDS ||
+                    action === ANKI_ACTIONS.REPLACE_TAGS ||
+                    action === ANKI_ACTIONS.DELETE_NOTES
+                  ) {
+                    resolve({ success: true } as T);
                     return;
                   }
-                  reject(new AnkiError("AnkiConnect returned null/undefined result"));
+                  reject(new AnkiError(`AnkiConnect returned null result for action: ${action}`));
+                  return;
+                }
+
+                if (parsedData.result === undefined && action !== ANKI_ACTIONS.DELETE_NOTES) {
+                  reject(new AnkiError("AnkiConnect returned undefined result"));
                   return;
                 }
 
@@ -113,46 +124,54 @@ export class AnkiService {
   }
 
   async createDeck(deckName: string): Promise<void> {
-    await this.request("createDeck", { deck: deckName });
+    await this.request(ANKI_ACTIONS.CREATE_DECK, { deck: deckName });
   }
 
   async addNote(note: AnkiNote): Promise<number> {
-    return await this.request<number>("addNote", { note });
+    return await this.request<number>(ANKI_ACTIONS.ADD_NOTE, { note });
   }
 
   async updateNoteFields(noteId: number, fields: Record<string, string>): Promise<void> {
-    await this.request("updateNoteFields", {
+    await this.request(ANKI_ACTIONS.UPDATE_NOTE_FIELDS, {
       note: { id: noteId, fields }
     });
   }
 
   async replaceTags(noteIds: number[], tags: string[]): Promise<void> {
-    await this.request("replaceTags", {
+    await this.request(ANKI_ACTIONS.REPLACE_TAGS, {
       notes: noteIds,
       tags: tags.join(" ")
     });
   }
 
+  async deleteNotes(noteIds: number[]): Promise<void> {
+    if (noteIds.length === 0) {
+      console.warn("deleteNotes called with empty array of note IDs.");
+      return;
+    }
+    await this.request<null>(ANKI_ACTIONS.DELETE_NOTES, { notes: noteIds });
+    // deleteNotes returns null on success; request() handles it
+  }
+
   async getDeckNames(): Promise<string[]> {
-    return await this.request<string[]>("deckNames");
+    return await this.request<string[]>(ANKI_ACTIONS.DECK_NAMES);
   }
 
   async findNotes(query: string): Promise<number[]> {
-    return await this.request<number[]>("findNotes", { query });
+    return await this.request<number[]>(ANKI_ACTIONS.FIND_NOTES, { query });
   }
 
   async getNotesInfo(noteIds: number[]): Promise<AnkiNoteInfo[]> {
-    // Handle large batches by chunking
     const allNotes: AnkiNoteInfo[] = [];
-    
+
     for (let i = 0; i < noteIds.length; i += CHUNK_SIZE) {
       const chunk = noteIds.slice(i, i + CHUNK_SIZE);
-      const chunkNotes = await this.request<AnkiNoteInfo[]>("notesInfo", {
+      const chunkNotes = await this.request<AnkiNoteInfo[]>(ANKI_ACTIONS.NOTES_INFO, {
         notes: chunk,
       });
       allNotes.push(...chunkNotes);
     }
-    
+
     return allNotes;
   }
 }

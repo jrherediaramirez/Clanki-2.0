@@ -1,6 +1,6 @@
 import { AnkiService } from "../services/anki.js";
 import { CreateCardArgumentsSchema, UpdateCardArgumentsSchema } from "../services/validation.js";
-import { ToolResponse } from "../types/mcp.js";
+import { ToolResponse } from "../types/mcp.js"; // This now refers to the updated ToolResponse
 import { NOTE_TYPES } from "../utils/constants.js";
 
 export const createCardTool = {
@@ -89,7 +89,7 @@ export async function handleCreateCard(
     content: [
       {
         type: "text",
-        text: `Successfully created new card in deck "${deckName}"${hint ? " with a hint." : "."}`,
+        text: { text: `Successfully created new card in deck "${deckName}"${hint ? " with a hint." : "."}` }, // Updated
       },
     ],
   };
@@ -117,7 +117,7 @@ export async function handleUpdateCard(
     content: [
       {
         type: "text",
-        text: `Successfully updated note ${noteId}`,
+        text: { text: `Successfully updated note ${noteId}` }, // Updated
       },
     ],
   };

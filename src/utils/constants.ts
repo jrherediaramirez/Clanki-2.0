@@ -20,4 +20,5 @@ export const ANKI_ACTIONS = {
   DECK_NAMES: "deckNames",
   FIND_NOTES: "findNotes",
   NOTES_INFO: "notesInfo",
+  DELETE_NOTES: "deleteNotes", // Add this line
 } as const;

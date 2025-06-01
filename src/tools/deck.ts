@@ -1,6 +1,6 @@
 import { AnkiService } from "../services/anki.js";
 import { CreateDeckArgumentsSchema } from "../services/validation.js";
-import { ToolResponse } from "../types/mcp.js";
+import { ToolResponse } from "../types/mcp.js"; // This now refers to the updated ToolResponse
 
 export const createDeckTool = {
   name: "create-deck",
@@ -29,7 +29,7 @@ export async function handleCreateDeck(
     content: [
       {
         type: "text",
-        text: `Successfully created new deck "${deckName}"`,
+        text: { text: `Successfully created new deck "${deckName}"` }, // Updated this line
       },
     ],
   };

@@ -39,9 +39,14 @@ export class AnkiServer {
     });
 
     // Handle tool calls
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    this.server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
       const { name, arguments: args } = request.params;
-      return await handleToolCall(name, args, this.ankiService);
+      await handleToolCall(name, args, this.ankiService);
+      // Return a structure that satisfies the SDK, assuming success if no error
+      return {
+        output: { message: "Tool call successful." }, // Or some other default success output
+        tools: [], // Add the 'tools' property as an empty array
+      };
     });
 
     // List available resources (Anki decks)

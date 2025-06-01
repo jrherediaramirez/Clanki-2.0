@@ -1,7 +1,7 @@
 export interface ToolResponse {
   content: Array<{
     type: "text";
-    text: string;
+    text: { text: string }; // Changed from string to { text: string }
   }>;
 }
 

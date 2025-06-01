@@ -87,3 +87,31 @@ export const GetCardInfoArgumentsSchema = z.object({
   cardIds: z.array(z.number().positive("Card ID must be a positive number."))
              .min(1, "At least one Card ID must be provided."),
 });
+
+// New Schemas for Model/Note Type Operations and Dynamic Card Creation
+export const GetModelInfoArgumentsSchema = z.object({
+  modelName: z.string().min(1, "Model name cannot be empty."),
+});
+
+export const CreateDynamicCardArgumentsSchema = z.object({
+  deckName: z.string().min(1, "Deck name cannot be empty."),
+  modelName: z.string().min(1, "Model name cannot be empty."),
+  fields: z.record(z.string(), z.string())
+    .refine(obj => Object.keys(obj).length > 0, {
+      message: "Fields object cannot be empty.",
+    }),
+  tags: z.array(z.string()).optional(),
+});
+
+export const SmartCardCreationArgumentsSchema = z.object({
+    deckName: z.string().min(1, "Deck name cannot be empty."),
+    content: z.record(z.string(), z.string())
+        .refine(obj => Object.keys(obj).length > 0, {
+            message: "Content object cannot be empty.",
+        })
+        .describe("Key-value pairs of unstructured content to be mapped to card fields."),
+    suggestedType: z.string().optional()
+        .describe("Optional suggested note model/type for the card."),
+    tags: z.array(z.string()).optional()
+        .describe("Optional tags for the new card."),
+});

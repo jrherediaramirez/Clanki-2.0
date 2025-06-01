@@ -27,4 +27,10 @@ export const ANKI_ACTIONS = {
   CARDS_INFO: "cardsInfo",
   SUSPEND: "suspend",
   UNSUSPEND: "unsuspend",
+  // New actions for model/note type operations
+  MODEL_NAMES: "modelNames",
+  MODEL_FIELD_NAMES: "modelFieldNames",
+  MODEL_TEMPLATES: "modelTemplates", // Used by getModelInfo
+  MODEL_STYLING: "modelStyling",     // Used by getModelInfo
+  
 } as const;

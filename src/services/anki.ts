@@ -1,14 +1,15 @@
+// jrherediaramirez/clanki-2.0/Clanki-2.0-6b23594186d62acc58f666efd8a075e8fcf06b78/src/services/anki.ts
 import * as http from "http";
-import { 
-  ANKI_CONNECT_HOST, 
-  ANKI_CONNECT_PORT, 
+import {
+  ANKI_CONNECT_HOST,
+  ANKI_CONNECT_PORT,
   ANKI_CONNECT_VERSION,
   DEFAULT_RETRIES,
   DEFAULT_DELAY,
   CHUNK_SIZE,
   ANKI_ACTIONS
 } from "../utils/constants.js";
-import { AnkiResponse, AnkiNote, AnkiNoteInfo, AnkiCardInfo, DeckStats } from "../types/anki.js";
+import { AnkiResponse, AnkiNote, AnkiNoteInfo, ModelInfo, ModelTemplate } from "../types/anki.js"; // Ensure ModelInfo, ModelTemplate are imported
 import { AnkiError } from "../utils/errors.js";
 
 export class AnkiService {
@@ -71,27 +72,37 @@ export class AnkiService {
                   return;
                 }
 
-                // Handle null results for specific actions
                 if (parsedData.result === null) {
+                  // For actions where null is a valid success response (e.g., void operations or specific queries)
                   if (
                     action === ANKI_ACTIONS.UPDATE_NOTE_FIELDS ||
                     action === ANKI_ACTIONS.REPLACE_TAGS ||
-                    action === ANKI_ACTIONS.DELETE_NOTES ||
-                    action === ANKI_ACTIONS.DELETE_DECKS ||
-                    action === ANKI_ACTIONS.SUSPEND ||
-                    action === ANKI_ACTIONS.UNSUSPEND
+                    action === ANKI_ACTIONS.DELETE_NOTES // deleteNotes returns null for success
+                    // No special handling for MODEL_STYLING here, as it might return actual null for default CSS.
+                    // getModelStyling will handle this and return "".
                   ) {
-                    resolve({ success: true } as T);
+                    // For these specific actions, null result can be treated as success.
+                    // We resolve with a generic success object or specific expected null type.
+                    resolve(null as T); // Or specific type if T is known to be e.g. void then handle appropriately
                     return;
                   }
+                  // For other actions, a null result might be unexpected unless T allows null.
+                  // If MODEL_STYLING returns null, it's handled by the getModelStyling method to return "".
+                  // If MODEL_TEMPLATES returns null, it would be an issue, getModelTemplates should handle.
+                  // For now, if T is not void or a type that explicitly includes null, this is problematic.
+                  // Let's allow `resolve(null as T)` if the specific caller (like getModelStyling) handles it.
+                   if (action === ANKI_ACTIONS.MODEL_STYLING) {
+                     resolve(null as T); // getModelStyling will convert this to ""
+                     return;
+                   }
+
+                  // For other actions not explicitly listed, returning null when not expected is an error.
                   reject(new AnkiError(`AnkiConnect returned null result for action: ${action}`));
                   return;
                 }
-
-                if (parsedData.result === undefined && action !== ANKI_ACTIONS.DELETE_NOTES) {
-                  reject(new AnkiError("AnkiConnect returned undefined result"));
-                  return;
-                }
+                // No need to check for parsedData.result === undefined specifically for DELETE_NOTES
+                // as it's covered by the null check now if AnkiConnect guarantees null on success.
+                // If it could also return undefined for success, that would need another condition.
 
                 resolve(parsedData.result);
               } catch (parseError) {
@@ -119,14 +130,13 @@ export class AnkiService {
         }
         console.error(`Attempt ${attempt}/${retries} failed, retrying after ${delay}ms...`);
         await new Promise((resolve) => setTimeout(resolve, delay));
-        delay *= 2;
+        delay *= 2; // Exponential backoff
       }
     }
 
     throw new AnkiError(`Failed after ${retries} attempts`);
   }
 
-  // Existing methods
   async createDeck(deckName: string): Promise<void> {
     await this.request(ANKI_ACTIONS.CREATE_DECK, { deck: deckName });
   }
@@ -153,6 +163,8 @@ export class AnkiService {
       console.warn("deleteNotes called with empty array of note IDs.");
       return;
     }
+    // AnkiConnect's deleteNotes action returns null on success.
+    // The request method's null handling for DELETE_NOTES resolves.
     await this.request<null>(ANKI_ACTIONS.DELETE_NOTES, { notes: noteIds });
   }
 
@@ -166,7 +178,6 @@ export class AnkiService {
 
   async getNotesInfo(noteIds: number[]): Promise<AnkiNoteInfo[]> {
     const allNotes: AnkiNoteInfo[] = [];
-
     for (let i = 0; i < noteIds.length; i += CHUNK_SIZE) {
       const chunk = noteIds.slice(i, i + CHUNK_SIZE);
       const chunkNotes = await this.request<AnkiNoteInfo[]>(ANKI_ACTIONS.NOTES_INFO, {
@@ -174,117 +185,104 @@ export class AnkiService {
       });
       allNotes.push(...chunkNotes);
     }
-
     return allNotes;
   }
 
-  // New methods for additional functionality
-  async deleteDeck(deckName: string): Promise<void> {
-    await this.request(ANKI_ACTIONS.DELETE_DECKS, { 
-      decks: [deckName], 
-      cardsToo: true // Delete cards along with deck
-    });
+  // --- Model/Note Type Operations ---
+
+  async getModelNames(): Promise<string[]> {
+    return await this.request<string[]>(ANKI_ACTIONS.MODEL_NAMES);
   }
 
-  async findCards(query: string): Promise<number[]> {
-    return await this.request<number[]>(ANKI_ACTIONS.FIND_CARDS, { query });
+  async getModelFieldNames(modelName: string): Promise<string[]> {
+    return await this.request<string[]>(ANKI_ACTIONS.MODEL_FIELD_NAMES, { modelName });
   }
 
-  async getCardsInfo(cardIds: number[]): Promise<AnkiCardInfo[]> {
-    const allCards: AnkiCardInfo[] = [];
+  /**
+   * Fetches model templates from AnkiConnect.
+   * AnkiConnect returns an object where keys are template names and values are
+   * objects like { Front: "html", Back: "html" }.
+   * This method transforms it into an array of ModelTemplate objects.
+   */
+  async getModelTemplates(modelName: string): Promise<ModelTemplate[]> {
+    const templatesResult = await this.request<Record<string, { Front: string; Back: string }>>(
+      ANKI_ACTIONS.MODEL_TEMPLATES,
+      { modelName }
+    );
 
-    for (let i = 0; i < cardIds.length; i += CHUNK_SIZE) {
-      const chunk = cardIds.slice(i, i + CHUNK_SIZE);
-      const chunkCards = await this.request<AnkiCardInfo[]>(ANKI_ACTIONS.CARDS_INFO, {
-        cards: chunk,
-      });
-      allCards.push(...chunkCards);
+    if (!templatesResult || typeof templatesResult !== 'object') {
+      console.warn(`Received unexpected or null templates data for ${modelName}:`, templatesResult);
+      return []; // Return empty array if data is not as expected
     }
 
-    return allCards;
+    // Transform the object into an array of ModelTemplate
+    // Assuming your ModelTemplate interface is { name: string, qfmt: string, afmt: string }
+    return Object.entries(templatesResult).map(([templateName, templateData]) => ({
+      name: templateName,
+      qfmt: templateData.Front, // Map 'Front' from AnkiConnect to 'qfmt'
+      afmt: templateData.Back,  // Map 'Back' from AnkiConnect to 'afmt'
+    }));
   }
 
-  async suspendCards(cardIds: number[]): Promise<void> {
-    if (cardIds.length === 0) {
-      console.warn("suspendCards called with empty array of card IDs.");
-      return;
+  async getModelStyling(modelName: string): Promise<string> {
+    // AnkiConnect for modelStyling can return:
+    // 1. An object like { css: "..." }
+    // 2. The CSS string directly
+    // 3. null if there's no custom styling (uses default)
+    const result = await this.request<{ css: string } | string | null>(ANKI_ACTIONS.MODEL_STYLING, { modelName });
+
+    if (result === null) { // Explicitly handle null for default styling
+        return ""; // Return empty string for default/no custom CSS
+    } else if (typeof result === 'string') {
+        return result;
+    } else if (result && typeof result.css === 'string') {
+        return result.css;
     }
-    await this.request(ANKI_ACTIONS.SUSPEND, { cards: cardIds });
+    console.warn(`Unexpected styling format for ${modelName}:`, result);
+    return ""; // Fallback for unexpected format
   }
 
-  async unsuspendCards(cardIds: number[]): Promise<void> {
-    if (cardIds.length === 0) {
-      console.warn("unsuspendCards called with empty array of card IDs.");
-      return;
-    }
-    await this.request(ANKI_ACTIONS.UNSUSPEND, { cards: cardIds });
-  }
+  async getModelInfo(modelName: string): Promise<ModelInfo> {
+    const [fields, templates, css] = await Promise.all([
+      this.getModelFieldNames(modelName),
+      this.getModelTemplates(modelName), // This will now correctly return ModelTemplate[]
+      this.getModelStyling(modelName)
+    ]);
 
-  async getDeckStats(deckName: string): Promise<DeckStats> {
-    // Get all cards in the deck
-    const allCardIds = await this.findCards(`deck:"${deckName}"`);
-    
-    if (allCardIds.length === 0) {
-      return {
-        deckName,
-        totalCards: 0,
-        newCards: 0,
-        learningCards: 0,
-        dueCards: 0,
-        suspendedCards: 0,
-        buriedCards: 0,
-      };
-    }
-
-    // Get detailed info about all cards
-    const cardsInfo = await this.getCardsInfo(allCardIds);
-    
-    // Calculate statistics
-    const stats: DeckStats = {
-      deckName,
-      totalCards: cardsInfo.length,
-      newCards: 0,
-      learningCards: 0,
-      dueCards: 0,
-      suspendedCards: 0,
-      buriedCards: 0,
+    return {
+      modelName,
+      fields,
+      templates, // Should now be an array, fixing the .map() error
+      css: css,     // getModelStyling ensures this is a string
+      isCloze: modelName.toLowerCase().includes('cloze') // Basic heuristic
     };
+  }
 
-    let totalInterval = 0;
-    let cardCountWithInterval = 0;
-
-    for (const card of cardsInfo) {
-      // Card queue meanings:
-      // 0 = new, 1 = learning, 2 = due, -1 = suspended, -2 = user buried, -3 = sched buried
-      switch (card.queue) {
-        case 0:
-          stats.newCards++;
-          break;
-        case 1:
-          stats.learningCards++;
-          break;
-        case 2:
-          stats.dueCards++;
-          if (card.interval > 0) {
-            totalInterval += card.interval;
-            cardCountWithInterval++;
-          }
-          break;
-        case -1:
-          stats.suspendedCards++;
-          break;
-        case -2:
-        case -3:
-          stats.buriedCards++;
-          break;
+  async getAllModelsInfo(): Promise<Record<string, ModelInfo>> {
+    const modelNames = await this.getModelNames();
+    const modelsInfo: Record<string, ModelInfo> = {};
+    for (const modelName of modelNames) {
+      try {
+        modelsInfo[modelName] = await this.getModelInfo(modelName);
+      } catch (error) {
+        console.error(`Failed to get info for model ${modelName}:`, error);
+        // Optionally skip this model or add partial info with an error flag
       }
     }
+    return modelsInfo;
+  }
 
-    // Calculate average interval
-    if (cardCountWithInterval > 0) {
-      stats.averageInterval = Math.round(totalInterval / cardCountWithInterval);
+  async addNoteWithValidation(note: AnkiNote): Promise<number> {
+    const validFields = await this.getModelFieldNames(note.modelName);
+    const providedFields = Object.keys(note.fields);
+    const invalidFields = providedFields.filter(field => !validFields.includes(field));
+
+    if (invalidFields.length > 0) {
+      throw new AnkiError(
+        `Invalid fields for model "${note.modelName}": ${invalidFields.join(', ')}. ` +
+        `Valid fields are: ${validFields.join(', ')}`
+      );
     }
-
-    return stats;
+    return await this.addNote(note);
   }
 }

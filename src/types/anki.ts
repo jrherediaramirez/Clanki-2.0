@@ -59,6 +59,30 @@ export interface UpdateClozeCardArgs {
   tags?: string[];
 }
 
+// New Interfaces for Model/Note Type Operations
+export interface ModelTemplate {
+  name: string;
+  qfmt: string; // Question format
+  afmt: string; // Answer format
+}
+
+export interface ModelInfo {
+  modelName: string;
+  fields: string[]; // Names of the fields
+  templates: ModelTemplate[];
+  css: string;
+  isCloze: boolean; // Heuristic based on model name
+}
+
+export interface FieldInfo { // Detailed field information (if AnkiConnect provides it)
+  name: string;
+  ord: number; // Field order
+  sticky: boolean;
+  rtl: boolean;
+  font: string;
+  size: number;
+}
+
 // New interfaces for additional functionality
 export interface AnkiCardInfo {
   cardId: number;

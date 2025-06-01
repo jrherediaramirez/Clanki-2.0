@@ -1,0 +1,694 @@
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+import * as http from "http";
+
+// Constants
+const ANKI_CONNECT_URL = "http://localhost:8765";
+
+// Type definitions for Anki responses
+interface AnkiCard {
+  noteId: number;
+  fields: {
+    Front: { value: string };
+    Back: { value: string };
+    Hint?: { value: string }; // Optional Hint field
+    [key: string]: { value: string } | undefined; // Allow additional fields like Hint
+  };
+  tags: string[];
+}
+
+interface AnkiResponse<T> {
+  result: T;
+  error: string | null;
+}
+
+// Validation schemas
+const ListDecksArgumentsSchema = z.object({});
+
+const CreateDeckArgumentsSchema = z.object({
+  name: z.string().min(1),
+});
+
+const CreateCardArgumentsSchema = z.object({
+  deckName: z.string(),
+  front: z.string(),
+  back: z.string(),
+  hint: z.string().optional(), // Hint is optional
+  tags: z.array(z.string()).optional(),
+});
+
+const CreateClozeCardArgumentsSchema = z.object({
+  deckName: z.string(),
+  text: z.string(),
+  backExtra: z.string().optional(),
+  // If you want hints for cloze cards, add:
+  // hint: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+});
+
+const UpdateCardArgumentsSchema = z.object({
+  noteId: z.number(),
+  front: z.string().optional(),
+  back: z.string().optional(),
+  // If you want to update hints for basic cards, add:
+  // hint: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+});
+
+const UpdateClozeCardArgumentsSchema = z.object({
+  noteId: z.number(),
+  text: z.string().optional(),
+  backExtra: z.string().optional(),
+  // If you want to update hints for cloze cards, add:
+  // hint: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+});
+
+// Helper function for making AnkiConnect requests with retries
+async function ankiRequest<T>(
+  action: string,
+  params: Record<string, any> = {},
+  retries = 3,
+  delay = 1000
+): Promise<T> {
+  console.error(
+    `Attempting AnkiConnect request: ${action} with params:`,
+    params
+  );
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const result = await new Promise<T>((resolve, reject) => {
+        const data = JSON.stringify({
+          action,
+          version: 6,
+          params,
+        });
+
+        console.error("Request payload:", data);
+
+        const options = {
+          hostname: "127.0.0.1",
+          port: 8765,
+          path: "/",
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(data),
+          },
+        };
+
+        const req = http.request(options, (res) => {
+          let responseData = "";
+
+          res.on("data", (chunk: Buffer) => {
+            responseData += chunk.toString();
+          });
+
+          res.on("end", () => {
+            console.error(`AnkiConnect response status: ${res.statusCode}`);
+            console.error(`AnkiConnect response body: ${responseData}`);
+
+            if (res.statusCode !== 200) {
+              reject(
+                new Error(
+                  `AnkiConnect request failed with status ${res.statusCode}: ${responseData}`
+                )
+              );
+              return;
+            }
+
+            try {
+              const parsedData = JSON.parse(responseData) as AnkiResponse<T>;
+              console.error("Parsed response:", parsedData);
+
+              if (parsedData.error) {
+                reject(new Error(`AnkiConnect error: ${parsedData.error}`));
+                return;
+              }
+
+              if (
+                parsedData.result === null ||
+                parsedData.result === undefined
+              ) {
+                if (action === "updateNoteFields" || action === "replaceTags") {
+                  resolve({} as T);
+                  return;
+                }
+                reject(new Error("AnkiConnect returned null/undefined result"));
+                return;
+              }
+
+              resolve(parsedData.result);
+            } catch (parseError) {
+              console.error("Parse error:", parseError);
+              reject(
+                new Error(
+                  `Failed to parse AnkiConnect response: ${responseData}`
+                )
+              );
+            }
+          });
+        });
+
+        req.on("error", (error: Error) => {
+          console.error(
+            `Error in ankiRequest (attempt ${attempt}/${retries}):`,
+            error
+          );
+          reject(error);
+        });
+
+        req.write(data);
+        req.end();
+      });
+
+      return result;
+    } catch (error) {
+      if (attempt === retries) {
+        throw error;
+      }
+      console.error(
+        `Attempt ${attempt}/${retries} failed, retrying after ${delay}ms...`
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay *= 2;
+    }
+  }
+
+  throw new Error(`Failed after ${retries} attempts`);
+}
+
+async function main() {
+  const server = new Server(
+    {
+      name: "anki-server",
+      version: "1.0.0",
+    },
+    {
+      capabilities: {
+        tools: {},
+        resources: {},
+      },
+    }
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    return {
+      tools: [
+        {
+          name: "create-deck",
+          description: "Create a new Anki deck",
+          inputSchema: {
+            type: "object",
+            properties: {
+              name: {
+                type: "string",
+                description: "Name for the new deck",
+              },
+            },
+            required: ["name"],
+          },
+        },
+        {
+          name: "create-card",
+          description: "Create a new flashcard in a specified deck, with an optional hint.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              deckName: {
+                type: "string",
+                description: "Name of the deck to add the card to",
+              },
+              front: {
+                type: "string",
+                description: "Front side content of the card",
+              },
+              back: {
+                type: "string",
+                description: "Back side content of the card",
+              },
+              hint: { // Added hint to properties
+                type: "string",
+                description: "Optional hint for the card (ensure your Anki note type has a 'Hint' field)",
+              },
+              tags: {
+                type: "array",
+                items: { type: "string" },
+                description: "Optional tags for the card",
+              },
+            },
+            required: ["deckName", "front", "back"],
+          },
+        },
+        {
+          name: "update-card",
+          description: "Update an existing flashcard",
+          inputSchema: {
+            type: "object",
+            properties: {
+              noteId: {
+                type: "number",
+                description: "ID of the note to update",
+              },
+              front: {
+                type: "string",
+                description: "New front side content",
+              },
+              back: {
+                type: "string",
+                description: "New back side content",
+              },
+              // If you want to update hints:
+              // hint: {
+              //   type: "string",
+              //   description: "New hint for the card",
+              // },
+              tags: {
+                type: "array",
+                items: { type: "string" },
+                description: "New tags for the card",
+              },
+            },
+            required: ["noteId"],
+          },
+        },
+        {
+          name: "create-cloze-card",
+          description:
+            "Create a new cloze deletion card in a specified deck. Use {{c1::text}} syntax for cloze deletions.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              deckName: {
+                type: "string",
+                description: "Name of the deck to add the card to",
+              },
+              text: {
+                type: "string",
+                description:
+                  "Text containing cloze deletions using {{c1::text}} syntax",
+              },
+              backExtra: {
+                type: "string",
+                description:
+                  "Optional extra information to show on the back of the card",
+              },
+              // If you want hints for cloze cards:
+              // hint: {
+              //   type: "string",
+              //   description: "Optional hint for the cloze card (ensure your Anki Cloze note type has a 'Hint' field)",
+              // },
+              tags: {
+                type: "array",
+                items: { type: "string" },
+                description: "Optional tags for the card",
+              },
+            },
+            required: ["deckName", "text"],
+          },
+        },
+        {
+          name: "update-cloze-card",
+          description: "Update an existing cloze deletion card",
+          inputSchema: {
+            type: "object",
+            properties: {
+              noteId: {
+                type: "number",
+                description: "ID of the note to update",
+              },
+              text: {
+                type: "string",
+                description:
+                  "New text with cloze deletions using {{c1::text}} syntax",
+              },
+              backExtra: {
+                type: "string",
+                description:
+                  "New extra information to show on the back of the card",
+              },
+              // If you want to update hints for cloze cards:
+              // hint: {
+              //   type: "string",
+              //   description: "New hint for the cloze card",
+              // },
+              tags: {
+                type: "array",
+                items: { type: "string" },
+                description: "New tags for the card",
+              },
+            },
+            required: ["noteId"],
+          },
+        },
+      ],
+    };
+  });
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+
+    try {
+      if (name === "create-deck") {
+        const { name: deckName } = CreateDeckArgumentsSchema.parse(args);
+        await ankiRequest("createDeck", {
+          deck: deckName,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully created new deck "${deckName}"`,
+            },
+          ],
+        };
+      }
+
+      if (name === "create-card") {
+        const {
+          deckName,
+          front,
+          back,
+          hint, // Hint is now destructured
+          tags = [],
+        } = CreateCardArgumentsSchema.parse(args);
+
+        // Prepare fields for Anki, including the optional hint
+        const ankiFields: { Front: string; Back: string; Hint?: string } = {
+          Front: front,
+          Back: back,
+        };
+
+        if (hint) {
+          // IMPORTANT: Assumes your Anki note type has a field named "Hint"
+          ankiFields.Hint = hint;
+        }
+
+        await ankiRequest("addNote", {
+          note: {
+            deckName,
+            modelName: "Basic", // Ensure this model in Anki has a "Hint" field if hint is used
+            fields: ankiFields, // Use the prepared ankiFields
+            tags,
+          },
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully created new card in deck "${deckName}"${hint ? " with a hint." : "."}`,
+            },
+          ],
+        };
+      }
+
+      if (name === "update-card") {
+        const { noteId, front, back, /* add hint here if implementing */ tags } =
+          UpdateCardArgumentsSchema.parse(args);
+
+        // Prepare fields for update, including optional hint if you add it
+        const fieldsToUpdate: Record<string, string> = {};
+        if (front) fieldsToUpdate.Front = front;
+        if (back) fieldsToUpdate.Back = back;
+        // if (hint) fieldsToUpdate.Hint = hint; // Add this if implementing hint update
+
+        if (Object.keys(fieldsToUpdate).length > 0) {
+          await ankiRequest("updateNoteFields", {
+            note: {
+              id: noteId,
+              fields: fieldsToUpdate,
+            },
+          });
+        }
+
+        if (tags) {
+          await ankiRequest("replaceTags", {
+            notes: [noteId],
+            tags: tags.join(" "),
+          });
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully updated note ${noteId}`,
+            },
+          ],
+        };
+      }
+
+      if (name === "create-cloze-card") {
+        const {
+          deckName,
+          text,
+          backExtra = "",
+          // hint, // Add hint here if implementing for cloze
+          tags = [],
+        } = CreateClozeCardArgumentsSchema.parse(args);
+
+        if (!text.includes("{{c") || !text.includes("}}")) {
+          throw new Error(
+            "Text must contain at least one cloze deletion using {{c1::text}} syntax"
+          );
+        }
+        
+        const clozeFields: { Text: string; "Back Extra": string; Hint?: string } = {
+          Text: text,
+          "Back Extra": backExtra,
+        };
+
+        // if (hint) { // If implementing hint for cloze
+        //   clozeFields.Hint = hint; // Assumes your Cloze model has a "Hint" field
+        // }
+
+        await ankiRequest("addNote", {
+          note: {
+            deckName,
+            modelName: "Cloze", // Ensure this model has a "Hint" field if using hints
+            fields: clozeFields,
+            tags,
+          },
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully created new cloze card in deck "${deckName}"`,
+            },
+          ],
+        };
+      }
+
+      if (name === "update-cloze-card") {
+        const { noteId, text, backExtra, /* add hint here if implementing */ tags } =
+          UpdateClozeCardArgumentsSchema.parse(args);
+
+        const noteInfo = await ankiRequest<any[]>("notesInfo", {
+          notes: [noteId],
+        });
+
+        if (noteInfo.length === 0) {
+          throw new Error(`No note found with ID ${noteId}`);
+        }
+
+        if (noteInfo[0].modelName !== "Cloze") {
+          throw new Error("This note is not a cloze deletion note");
+        }
+
+        const fieldsToUpdate: Record<string, string> = {};
+        if (text) {
+          if (!text.includes("{{c") || !text.includes("}}")) {
+            throw new Error(
+              "Text must contain at least one cloze deletion using {{c1::text}} syntax"
+            );
+          }
+          fieldsToUpdate.Text = text;
+        }
+        if (backExtra !== undefined) {
+          fieldsToUpdate["Back Extra"] = backExtra;
+        }
+        // if (hint !== undefined) { // If implementing hint update for cloze
+        //    fieldsToUpdate.Hint = hint;
+        // }
+
+
+        if (Object.keys(fieldsToUpdate).length > 0) {
+            await ankiRequest("updateNoteFields", {
+                note: {
+                id: noteId,
+                fields: fieldsToUpdate,
+                },
+            });
+        }
+
+        if (tags) {
+          await ankiRequest("replaceTags", {
+            notes: [noteId],
+            tags: tags.join(" "),
+          });
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully updated cloze note ${noteId}`,
+            },
+          ],
+        };
+      }
+
+      throw new Error(`Unknown tool: ${name}`);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        throw new Error(
+          `Invalid arguments: ${error.errors
+            .map((e) => `${e.path.join(".")}: ${e.message}`)
+            .join(", ")}`
+        );
+      }
+      throw error;
+    }
+  });
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    try {
+      const decks = await ankiRequest<string[]>("deckNames");
+      return {
+        resources: decks.map((deck) => ({
+          uri: `anki://deck/${encodeURIComponent(deck)}`,
+          name: deck,
+          description: `Anki deck: ${deck}`,
+        })),
+      };
+    } catch (error) {
+      console.error("Error listing resources:", error);
+      throw error;
+    }
+  });
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    try {
+      const uri = request.params.uri;
+      const match = uri.match(/^anki:\/\/deck\/(.+)$/);
+
+      if (!match) {
+        throw new Error(`Invalid resource URI: ${uri}`);
+      }
+
+      const deckName = decodeURIComponent(match[1]);
+      console.error(`Attempting to fetch cards for deck: ${deckName}`);
+
+      const noteIds = await ankiRequest<number[]>("findNotes", {
+        query: `deck:"${deckName}"`, // Added quotes around deckName for safety
+      });
+
+      console.error(`Found ${noteIds.length} notes in deck ${deckName}`);
+
+      if (noteIds.length === 0) {
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: "text/plain",
+              text: `Deck: ${deckName}\n\nNo notes found in this deck.`,
+            },
+          ],
+        };
+      }
+
+      const chunkSize = 5;
+      let allNotes: any[] = [];
+
+      for (let i = 0; i < noteIds.length; i += chunkSize) {
+        const chunk = noteIds.slice(i, i + chunkSize);
+        const chunkNotes = await ankiRequest<any[]>("notesInfo", {
+          notes: chunk,
+        });
+        allNotes = allNotes.concat(chunkNotes);
+      }
+
+      console.error(`Retrieved ${allNotes.length} notes total`);
+      
+      // Updated AnkiCard interface to include optional Hint
+      const cardInfo: AnkiCard[] = allNotes.map((note) => {
+        const baseCard: AnkiCard = {
+          noteId: note.noteId,
+          tags: note.tags,
+          fields: {
+            Front: { value: "[Unknown note type]" }, // Default value
+            Back: { value: "[Unknown note type]" }, // Default value
+          },
+        };
+      
+        if (note.modelName === "Cloze") {
+          baseCard.fields.Front = { value: note.fields.Text?.value || "" };
+          // For cloze, "Back" is often the "Back Extra" field.
+          // Or, if the full cloze text is desired on the back, it would be Text field again.
+          // Anki's rendering of cloze is complex; here we use "Back Extra".
+          baseCard.fields.Back = { value: note.fields["Back Extra"]?.value || "[Cloze deletion]" };
+          // if (note.fields.Hint) baseCard.fields.Hint = { value: note.fields.Hint.value }; // If cloze model has Hint
+        } else if (note.modelName === "Basic") { // Or any other model that uses Front/Back/Hint
+          baseCard.fields.Front = { value: note.fields.Front?.value || "" };
+          baseCard.fields.Back = { value: note.fields.Back?.value || "" };
+          if (note.fields.Hint) baseCard.fields.Hint = { value: note.fields.Hint.value };
+        } else {
+          // For other unknown models, try to get Front and Back if they exist
+          if (note.fields.Front) baseCard.fields.Front = { value: note.fields.Front.value };
+          if (note.fields.Back) baseCard.fields.Back = { value: note.fields.Back.value };
+          if (note.fields.Hint) baseCard.fields.Hint = { value: note.fields.Hint.value }; // And Hint
+          console.error(`Unknown or unhandled note type for display: ${note.modelName} - using available Front/Back/Hint fields.`);
+        }
+        return baseCard;
+      });
+
+      const deckContent = cardInfo
+        .map((card) => {
+          let content = `Note ID: ${card.noteId}\nFront: ${card.fields.Front.value}\nBack: ${card.fields.Back.value}`;
+          if (card.fields.Hint?.value) { // Check if Hint has a value before appending
+            content += `\nHint: ${card.fields.Hint.value}`;
+          }
+          content += `\nTags: ${card.tags.join(", ")}\n---`;
+          return content;
+        })
+        .join("\n");
+
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "text/plain",
+            text: `Deck: ${deckName}\n\n${deckContent}`,
+          },
+        ],
+      };
+    } catch (error) {
+      console.error(`Error reading deck: ${error}`);
+      throw new Error(
+        `Failed to read deck: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }. Make sure Anki is running and AnkiConnect plugin is installed.`
+      );
+    }
+  });
+
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error("Anki MCP Server running on stdio");
+}
+
+main().catch((error) => {
+  console.error("Fatal error in main():", error);
+  process.exit(1);
+});

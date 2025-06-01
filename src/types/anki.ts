@@ -1,0 +1,60 @@
+export interface AnkiResponse<T> {
+  result: T;
+  error: string | null;
+}
+
+export interface AnkiCard {
+  noteId: number;
+  fields: {
+    Front: { value: string };
+    Back: { value: string };
+    Hint?: { value: string };
+    Text?: { value: string };
+    "Back Extra"?: { value: string };
+    [key: string]: { value: string } | undefined;
+  };
+  tags: string[];
+}
+
+export interface AnkiNote {
+  deckName: string;
+  modelName: string;
+  fields: Record<string, string>;
+  tags: string[];
+}
+
+export interface AnkiNoteInfo {
+  noteId: number;
+  modelName: string;
+  tags: string[];
+  fields: Record<string, { value: string; order: number }>;
+}
+
+export interface CreateCardArgs {
+  deckName: string;
+  front: string;
+  back: string;
+  hint?: string;
+  tags?: string[];
+}
+
+export interface CreateClozeCardArgs {
+  deckName: string;
+  text: string;
+  backExtra?: string;
+  tags?: string[];
+}
+
+export interface UpdateCardArgs {
+  noteId: number;
+  front?: string;
+  back?: string;
+  tags?: string[];
+}
+
+export interface UpdateClozeCardArgs {
+  noteId: number;
+  text?: string;
+  backExtra?: string;
+  tags?: string[];
+}

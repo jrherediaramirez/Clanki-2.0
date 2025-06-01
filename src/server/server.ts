@@ -38,14 +38,16 @@ export class AnkiServer {
       return getToolDefinitions();
     });
 
-    // Handle tool calls
+// Handle tool calls
     this.server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
       const { name, arguments: args } = request.params;
-      await handleToolCall(name, args, this.ankiService);
-      // Return a structure that satisfies the SDK, assuming success if no error
+      const result = await handleToolCall(name, args, this.ankiService);
+      // Convert from the internal ToolResponse format to MCP SDK format
       return {
-        output: { message: "Tool call successful." }, // Or some other default success output
-        tools: [], // Add the 'tools' property as an empty array
+        content: result.content.map(item => ({
+          type: item.type,
+          text: item.text.text // Extract the text from the nested structure
+        }))
       };
     });
 
